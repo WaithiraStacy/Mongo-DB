@@ -1,0 +1,113 @@
+/*
+  MongoDB Library Management System
+  A well-structured system for handling books, borrowers, and transactions efficiently.
+*/
+
+use libraryDB;
+
+// Ensure collections exist
+const collections = ["books", "borrowers", "transactions"];
+collections.forEach(collection => {
+  if (!db.getCollectionNames().includes(collection)) {
+    db.createCollection(collection);
+  }
+});
+
+// Populate sample data if empty
+if (db.books.estimatedDocumentCount() === 0) {
+  db.books.insertMany([
+    { title: "Atomic Habits", author: "James Clear", genre: "Self-Help", copies_available: 4 },
+    { title: "Clean Code", author: "Robert C. Martin", genre: "Programming", copies_available: 2 }
+  ]);
+}
+
+if (db.borrowers.estimatedDocumentCount() === 0) {
+  db.borrowers.insertMany([
+    { name: "Eve", email: "eve@example.com", phone: "0798765432" },
+    { name: "Dave", email: "dave@example.com", phone: "0787654321" }
+  ]);
+}
+
+// Create indexes for faster searches
+db.books.createIndex({ title: 1 });
+db.borrowers.createIndex({ email: 1 });
+
+// Utility function to fetch a document
+function findDocument(collection, filter) {
+  return db[collection].findOne(filter);
+}
+
+// CRUD Operations
+function addNewBook(title, author, genre, copies) {
+  if (db.books.findOne({ title })) {
+    print("This book already exists in the library.");
+    return;
+  }
+  db.books.insertOne({ title, author, genre, copies_available: copies });
+  print("New book successfully added.");
+}
+
+function modifyBookCopies(title, quantity) {
+  const result = db.books.updateOne({ title }, { $inc: { copies_available: quantity } });
+  print(result.matchedCount === 0 ? "Book not found." : "Book inventory updated.");
+}
+
+function removeBook(title) {
+  const result = db.books.deleteOne({ title });
+  print(result.deletedCount > 0 ? "Book removed from catalog." : "Book not found in catalog.");
+}
+
+// Borrow a book
+function issueBook(borrowerName, bookTitle) {
+  const borrower = findDocument("borrowers", { name: borrowerName });
+  const book = findDocument("books", { title: bookTitle, copies_available: { $gt: 0 } });
+
+  if (!borrower) {
+    print("Borrower details not found.");
+    return;
+  }
+  if (!book) {
+    print("Requested book is currently unavailable.");
+    return;
+  }
+
+  db.transactions.insertOne({
+    borrower_id: borrower._id,
+    book_id: book._id,
+    borrow_date: new Date(),
+    return_date: null,
+    status: "borrowed"
+  });
+  modifyBookCopies(bookTitle, -1);
+  print("Book issued successfully.");
+}
+
+// Return a borrowed book
+function returnIssuedBook(borrowerName, bookTitle) {
+  const borrower = findDocument("borrowers", { name: borrowerName });
+  const book = findDocument("books", { title: bookTitle });
+  if (!borrower || !book) {
+    print("Invalid borrower or book details.");
+    return;
+  }
+  
+  const activeTransaction = db.transactions.findOne({ borrower_id: borrower._id, book_id: book._id, return_date: null });
+  if (!activeTransaction) {
+    print("No ongoing borrow transaction found.");
+    return;
+  }
+  
+  db.transactions.updateOne({ _id: activeTransaction._id }, { $set: { return_date: new Date(), status: "returned" } });
+  modifyBookCopies(bookTitle, 1);
+  print("Book successfully returned.");
+}
+
+// Retrieve borrowing history
+function fetchBorrowHistory(borrowerName) {
+  const borrower = findDocument("borrowers", { name: borrowerName });
+  if (!borrower) {
+    print("Borrower not found in the system.");
+    return [];
+  }
+  return db.transactions.find({ borrower_id: borrower._id }).toArray();
+}
